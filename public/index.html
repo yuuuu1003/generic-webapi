@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>加速度占い</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.2/lib/p5.min.js"></script>
+  <style>
+    body { font-family: sans-serif; text-align:center; background:#f4f4f9; }
+    .panel { border:1px solid #ddd; background:white; border-radius:10px; padding:20px; margin:10px auto; max-width:600px; }
+    button { padding:10px 20px; font-size:16px; cursor:pointer; }
+    #status { color: blue; font-weight: bold; margin: 10px; }
+    #p5holder { width: 100%; height: 300px; background: #000; border-radius: 8px; }
+    .tag { background: #eee; padding: 4px 8px; border-radius: 4px; margin: 2px; display: inline-block; }
+  </style>
+</head>
+<body>
+  <h1>🔮 加速度センサー占い</h1>
+  <div class="panel">
+    <button id="btnJoin">1. ルームに入る</button>
+    <button id="btnMeasure" disabled>2. 計測して占う(10秒)</button>
+    <div id="status">スマホを準備してください</div>
+    <div id="debug" style="font-size:10px; color:gray;"></div>
+  </div>
+
+  <div class="panel">
+    <h2 id="rTitle">-</h2>
+    <p id="rSummary">-</p>
+    <div id="rTags"></div>
+    <ul id="rAdvice" style="text-align:left;"></ul>
+  </div>
+
+  <div id="p5holder"></div>
+
+   
+  <img src="qr.png" style="position: absolute; width: 350px; height:350px; top: 30px; right: 150px;">
+
+  <script>
+    const socket = io();
+    const btnJoin = document.getElementById("btnJoin");
+    const btnMeasure = document.getElementById("btnMeasure");
+    const statusEl = document.getElementById("status");
+    const debugEl = document.getElementById("debug");
+
+    let latest = null;
+
+    socket.on("sensor", (data) => {
+      latest = data;
+      debugEl.textContent = `受信中: x=${data.g}, y=${data.b}, z=${data.z}`;
+    });
+
+    btnJoin.onclick = () => {
+      socket.emit("join");
+      btnJoin.disabled = true;
+      btnMeasure.disabled = false;
+      statusEl.textContent = "接続待機中... スマホで「接続」を押して動かしてください";
+    };
+
+    btnMeasure.onclick = async () => {
+      if (!latest) return alert("スマホからのデータが届いていません");
+      btnMeasure.disabled = true;
+      statusEl.textContent = "計測中... 10秒間スマホを動かしてください！";
+
+      const features = await captureFeatures(10000);
+      
+      statusEl.textContent = "運勢を解析中...";
+      const resp = await fetch("/api/oracle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ features })
+      });
+      const data = await resp.json();
+      renderResult(data);
+      statusEl.textContent = "完了！";
+      btnMeasure.disabled = false;
+    };
+
+    async function captureFeatures(ms) {
+      const samples = [];
+      const start = Date.now();
+      return new Promise(res => {
+        const interval = setInterval(() => {
+          if (latest) samples.push({ ...latest });
+          if (Date.now() - start > ms) {
+            clearInterval(interval);
+            res({
+              avgZ: samples.reduce((a, b) => a + Number(b.z), 0) / samples.length,
+              count: samples.length,
+              shake: samples.filter(s => Math.abs(s.g) > 30).length
+            });
+          }
+        }, 100);
+      });
+    }
+
+function renderResult(r) {
+  if (!r) return;
+  document.getElementById("rTitle").textContent = r.title || "占い不可";
+  document.getElementById("rSummary").textContent = r.summary || "解析に失敗しました。";
+  
+  // ?. (オプショナルチェイニング) と || [] を使ってエラーを防ぐ
+  const tags = document.getElementById("rTags");
+  tags.innerHTML = (r.tags || []).map(t => `<span class="tag">${t}</span>`).join("");
+  
+  const advice = document.getElementById("rAdvice");
+  advice.innerHTML = (r.advice || []).map(a => `<li>${a}</li>`).join("");
+  
+  // ビジュアル設定を更新
+      if(r.visual) {
+        visual = { ...visual, ...r.visual }; 
+        // もしAIが色を送ってこなかった時のために、デフォルト色を白にしておく
+        if (!visual.color) visual.color = "#FFFFFF";
+      }
+}
+
+    // p5.js Visualizer
+    let visual = { shape: "sphere", rotationSpeed: 0.02, noiseAmount: 0.1 };
+    new p5((p) => {
+      p.setup = () => {
+        let c = p.createCanvas(600, 300, p.WEBGL);
+        c.parent("p5holder");
+      };
+      p.draw = () => {
+        p.background(0); // 背景は黒
+        p.rotateX(p.frameCount * visual.rotationSpeed);
+        p.rotateY(p.frameCount * visual.rotationSpeed);
+        
+        // AIが指定した色を適用！
+        p.stroke(visual.color || 255); 
+        p.noFill();
+
+        if (visual.shape === "box") p.box(100);
+        else if (visual.shape === "torus") p.torus(70, 20);
+        else if (visual.shape === "icosa") p.sphere(100, 4, 4); // カクカクした形
+        else p.sphere(100, 12, 12);
+
+        // 粒子の色も変えるならここ
+        p.fill(visual.color || 255);
+        // ...（粒子を描画するループがある場合はそこも fill(visual.color) に）
+      };
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>送信機</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 50px 20px; }
+    button { width: 100%; padding: 30px; font-size: 24px; border-radius: 20px; border: none; background: #007bff; color: white; }
+    #msg { margin-top: 20px; color: #666; }
+  </style>
+</head>
+<body>
+  <button id="btnConnect">センサーを開始する</button>
+  <div id="msg">ボタンを押して許可してください</div>
+
+  <script>
+    const socket = io();
+    const btn = document.getElementById("btnConnect");
+    const msg = document.getElementById("msg");
+
+    btn.onclick = async () => {
+      // iOSの権限リクエスト
+      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        const permission = await DeviceMotionEvent.requestPermission();
+        if (permission !== 'granted') return alert("センサーの許可が必要です");
+      }
+
+      socket.emit("join");
+      btn.style.background = "#28a745";
+      btn.textContent = "送信中...";
+      msg.textContent = "PCの画面を確認してください";
+
+      // センサーイベントの登録（クリックイベント内で行うのが確実）
+      window.addEventListener("devicemotion", (e) => {
+        socket.emit("sensor", {
+          z: e.accelerationIncludingGravity.z.toFixed(2),
+          g: e.rotationRate?.gamma?.toFixed(2) || 0,
+          b: e.rotationRate?.beta?.toFixed(2) || 0
+        });
+      }, true);
+    };
+  </script>
+</body>
+</html>
